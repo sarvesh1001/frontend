@@ -2,14 +2,14 @@ import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import React, { useRef, useState } from 'react';
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Button from '../components/Button';
@@ -20,7 +20,7 @@ import { theme } from '../styles/theme';
 import { hp, wp } from '../utils/responsive';
 
 type RootStackParamList = {
-  MpinSetup: { phoneNumber: string; userType: 'admin' | 'user' };
+  MpinSetup: { phoneNumber: string };
   Home: undefined;
 };
 
@@ -33,13 +33,11 @@ interface Props {
 }
 
 const MpinSetupScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { userType } = route.params;
-
+  const { phoneNumber } = route.params;
   const [mpin, setMpin] = useState('');
   const [confirmMpin, setConfirmMpin] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Input refs for clearing MPIN on error
   const inputs = useRef<(TextInput | null)[]>([]);
 
   const clearMpinFields = () => {
@@ -62,13 +60,7 @@ const MpinSetupScreen: React.FC<Props> = ({ navigation, route }) => {
     setLoading(true);
 
     try {
-      let response;
-
-      if (userType === 'admin') {
-        response = await AuthService.setupAdminMpin(mpin);
-      } else {
-        response = await AuthService.setupUserMpin(mpin);
-      }
+      const response = await AuthService.setupAdminMpin(mpin);
 
       if (response.success) {
         await verifyMpin();
@@ -79,7 +71,6 @@ const MpinSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       const errorMessage =
         error?.response?.data?.message || error.message || 'Something went wrong. Please try again.';
       Alert.alert('Error', errorMessage);
-
       clearMpinFields();
     } finally {
       setLoading(false);
@@ -88,13 +79,7 @@ const MpinSetupScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const verifyMpin = async () => {
     try {
-      let response;
-
-      if (userType === 'admin') {
-        response = await AuthService.verifyAdminMpin(mpin);
-      } else {
-        response = await AuthService.verifyUserMpin(mpin);
-      }
+      const response = await AuthService.verifyAdminMpin(mpin);
 
       if (response.success) {
         navigation.replace('Home');
@@ -105,7 +90,6 @@ const MpinSetupScreen: React.FC<Props> = ({ navigation, route }) => {
       const errorMessage =
         error?.response?.data?.message || error.message || 'Failed to verify MPIN';
       Alert.alert('Error', errorMessage);
-
       clearMpinFields();
     }
   };

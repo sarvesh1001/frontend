@@ -1,15 +1,17 @@
+// src/screens/MpinLoginScreen.tsx
 import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import React, { useRef, useState } from 'react';
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Button from '../components/Button';
@@ -19,8 +21,10 @@ import { theme } from '../styles/theme';
 import { hp, wp } from '../utils/responsive';
 
 type RootStackParamList = {
-  MpinLogin: { phoneNumber: string; userType: 'admin' | 'user' };
+  MpinLogin: { phoneNumber: string };
   Home: undefined;
+  ForgotMpin: { phoneNumber: string };
+  PhoneLogin: undefined;
 };
 
 type MpinLoginScreenNavigationProp = StackNavigationProp<RootStackParamList, 'MpinLogin'>;
@@ -32,10 +36,20 @@ interface Props {
 }
 
 const MpinLoginScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { userType } = route.params;
+  const { phoneNumber } = route.params;
   const [mpin, setMpin] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const inputs = useRef<(TextInput | null)[]>([]);
+
+  React.useEffect(() => {
+    if (cooldown > 0) {
+      const interval = setInterval(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [cooldown]);
 
   const clearMpinFields = () => {
     setMpin(['', '', '', '', '', '']);
@@ -87,39 +101,56 @@ const MpinLoginScreen: React.FC<Props> = ({ navigation, route }) => {
     setLoading(true);
 
     try {
-      let response;
-
-      if (userType === 'admin') {
-        response = await AuthService.verifyAdminMpin(mpinString);
-      } else {
-        response = await AuthService.verifyUserMpin(mpinString);
-      }
+      const response = await AuthService.verifyAdminMpin(mpinString);
 
       if (response.success) {
         navigation.replace('Home');
       } else {
-        const err =
-          response?.data?.message ||
-          response?.message ||
-          'Invalid MPIN';
-
+        const err = response?.data?.message || response?.message || 'Invalid MPIN';
         Alert.alert('Error', err);
         clearMpinFields();
       }
     } catch (error: any) {
-      const errorMessage =
-        error?.response?.data?.message ||
-        error.message ||
-        'Something went wrong. Please try again.';
-
-      Alert.alert('Error', errorMessage);
+      if (error.response?.status === 429) {
+        const retryAfter = error.response.data.retry_after || 30;
+        setCooldown(retryAfter);
+        Alert.alert('Rate Limit Exceeded', `Please wait ${retryAfter} seconds before trying again`);
+      } else {
+        const errorMessage = error?.response?.data?.message || error.message || 'Something went wrong. Please try again.';
+        Alert.alert('Error', errorMessage);
+      }
       clearMpinFields();
     } finally {
       setLoading(false);
     }
   };
 
+  const handleForgotMpin = () => {
+    navigation.navigate('ForgotMpin', { phoneNumber });
+  };
+
+  const handleDifferentNumber = async () => {
+    Alert.alert(
+      'Switch Account',
+      'Do you want to use a different phone number? This will clear your current session.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Switch Number', 
+          style: 'destructive',
+          onPress: async () => {
+            // Clear phone number and session data
+            await AuthService.fullLogout();
+            // Navigate to phone login
+            navigation.replace('PhoneLogin');
+          }
+        },
+      ]
+    );
+  };
+
   const isMpinComplete = mpin.join('').length === 6;
+  const canSubmit = isMpinComplete && cooldown === 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -139,6 +170,9 @@ const MpinLoginScreen: React.FC<Props> = ({ navigation, route }) => {
             <Text style={styles.subtitle}>
               Enter your 6-digit MPIN to continue
             </Text>
+            <Text style={styles.phoneText}>
+              Logging in as: {phoneNumber}
+            </Text>
 
             <View style={styles.mpinContainer}>
               {mpin.map((digit, index) => (
@@ -155,17 +189,32 @@ const MpinLoginScreen: React.FC<Props> = ({ navigation, route }) => {
                   maxLength={index === 0 ? 6 : 1}
                   secureTextEntry
                   selectTextOnFocus
+                  editable={cooldown === 0}
                 />
               ))}
             </View>
 
+            {cooldown > 0 && (
+              <Text style={styles.cooldownText}>
+                Please wait {cooldown} seconds before trying again
+              </Text>
+            )}
+
             <Button
-              title="Login"
+              title={cooldown > 0 ? `Wait ${cooldown}s` : "Login"}
               onPress={handleLogin}
               loading={loading}
-              disabled={!isMpinComplete}
+              disabled={!canSubmit}
               fullWidth
             />
+
+            <TouchableOpacity style={styles.forgotButton} onPress={handleForgotMpin}>
+              <Text style={styles.forgotText}>Forgot MPIN?</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.differentNumberButton} onPress={handleDifferentNumber}>
+              <Text style={styles.differentNumberText}>Use different number</Text>
+            </TouchableOpacity>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -204,13 +253,20 @@ const styles = StyleSheet.create({
     fontSize: theme.typography.body.fontSize,
     color: theme.colors.textSecondary,
     textAlign: 'center',
+    marginBottom: hp('1%'),
+  },
+  phoneText: {
+    fontSize: theme.typography.body.fontSize,
+    color: theme.colors.primary,
+    fontWeight: '600',
+    textAlign: 'center',
     marginBottom: hp('6%'),
   },
   mpinContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
-    marginBottom: hp('6%'),
+    marginBottom: hp('2%'),
   },
   mpinInput: {
     width: wp('12%'),
@@ -227,6 +283,28 @@ const styles = StyleSheet.create({
   mpinInputFilled: {
     borderColor: theme.colors.primary,
     backgroundColor: theme.colors.surface,
+  },
+  cooldownText: {
+    fontSize: theme.typography.caption.fontSize,
+    color: theme.colors.error,
+    marginBottom: hp('2%'),
+    textAlign: 'center',
+  },
+  forgotButton: {
+    marginTop: hp('3%'),
+  },
+  forgotText: {
+    fontSize: theme.typography.body.fontSize,
+    color: theme.colors.primary,
+    fontWeight: '600',
+  },
+  differentNumberButton: {
+    marginTop: hp('2%'),
+  },
+  differentNumberText: {
+    fontSize: theme.typography.body.fontSize,
+    color: theme.colors.textSecondary,
+    textDecorationLine: 'underline',
   },
 });
 

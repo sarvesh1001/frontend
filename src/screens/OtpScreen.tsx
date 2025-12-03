@@ -2,14 +2,14 @@ import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Button from '../components/Button';
@@ -20,9 +20,9 @@ import { theme } from '../styles/theme';
 import { hp, wp } from '../utils/responsive';
 
 type RootStackParamList = {
-  Otp: { phoneNumber: string; userType: 'admin' | 'user' };
-  MpinSetup: { phoneNumber: string; userType: 'admin' | 'user' };
-  MpinLogin: { phoneNumber: string; userType: 'admin' | 'user' };
+  Otp: { phoneNumber: string };
+  MpinSetup: { phoneNumber: string };
+  MpinLogin: { phoneNumber: string };
   Home: undefined;
 };
 
@@ -35,11 +35,12 @@ interface Props {
 }
 
 const OtpScreen: React.FC<Props> = ({ navigation, route }) => {
-  const { phoneNumber, userType } = route.params;
+  const { phoneNumber } = route.params;
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
-  const [timer, setTimer] = useState(30);
+  const [timer, setTimer] = useState(0);
+  const [cooldown, setCooldown] = useState(0);
   const inputs = useRef<(TextInput | null)[]>([]);
 
   useEffect(() => {
@@ -50,6 +51,15 @@ const OtpScreen: React.FC<Props> = ({ navigation, route }) => {
       return () => clearInterval(interval);
     }
   }, [timer]);
+
+  useEffect(() => {
+    if (cooldown > 0) {
+      const interval = setInterval(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [cooldown]);
 
   const handleOtpChange = (value: string, index: number) => {
     if (value.length > 1) {
@@ -84,9 +94,6 @@ const OtpScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   };
 
-  // ============================================================
-  // VERIFY OTP
-  // ============================================================
   const handleVerifyOtp = async () => {
     const otpString = otp.join('');
 
@@ -98,42 +105,21 @@ const OtpScreen: React.FC<Props> = ({ navigation, route }) => {
     setLoading(true);
 
     try {
-      let response;
+      const response = await AuthService.verifyAdminOtp(phoneNumber, otpString);
 
-      if (userType === 'admin') {
-        response = await AuthService.verifyAdminOtp(phoneNumber, otpString);
+      if (response.success) {
+        // Store admin_id
+        if (response.data.admin_id) {
+          await setItem('admin_id', response.data.admin_id);
+        }
 
-        if (response.success) {
-          // Store admin_id
-          if (response.data.admin_id) {
-            await setItem('admin_id', response.data.admin_id);
-          }
-
-          if (response.data.has_mpin) {
-            navigation.navigate('MpinLogin', { phoneNumber, userType });
-          } else {
-            navigation.navigate('MpinSetup', { phoneNumber, userType });
-          }
+        if (response.data.has_mpin) {
+          navigation.navigate('MpinLogin', { phoneNumber });
         } else {
-          Alert.alert('Error', response.message || 'Invalid OTP');
+          navigation.navigate('MpinSetup', { phoneNumber });
         }
       } else {
-        response = await AuthService.verifyUserOtp(phoneNumber, otpString);
-
-        if (response.success) {
-          // Store user_id
-          if (response.data.user_id) {
-            await setItem('user_id', response.data.user_id);
-          }
-
-          if (response.data.has_mpin) {
-            navigation.navigate('MpinLogin', { phoneNumber, userType });
-          } else {
-            navigation.navigate('MpinSetup', { phoneNumber, userType });
-          }
-        } else {
-          Alert.alert('Error', response.message || 'Invalid OTP');
-        }
+        Alert.alert('Error', response.message || 'Invalid OTP');
       }
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Something went wrong. Please try again.');
@@ -142,25 +128,38 @@ const OtpScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   };
 
-  // ============================================================
-  // RESEND OTP
-  // ============================================================
   const handleResendOtp = async () => {
     setResendLoading(true);
 
     try {
-      const purpose = userType === 'admin' ? 'admin_login' : 'login';
-      await AuthService.sendOtp(phoneNumber, purpose);
-      setTimer(30);
-      Alert.alert('Success', 'OTP has been resent to your phone');
+      const response = await AuthService.sendOtp(phoneNumber, 'admin_login');
+      
+      if (response.success) {
+        setTimer(30);
+        Alert.alert('Success', 'OTP has been resent to your phone');
+      } else {
+        if (response.retry_after) {
+          setCooldown(response.retry_after);
+          Alert.alert('Too Many Requests', `Please wait ${response.retry_after} seconds before requesting a new OTP`);
+        } else {
+          Alert.alert('Error', response.message || 'Failed to resend OTP');
+        }
+      }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to resend OTP');
+      if (error.response?.status === 429) {
+        const retryAfter = error.response.data.retry_after;
+        setCooldown(retryAfter);
+        Alert.alert('Too Many Requests', `Please wait ${retryAfter} seconds before requesting a new OTP`);
+      } else {
+        Alert.alert('Error', error.message || 'Failed to resend OTP');
+      }
     } finally {
       setResendLoading(false);
     }
   };
 
   const isOtpComplete = otp.join('').length === 6;
+  const canResend = timer === 0 && cooldown === 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -212,11 +211,14 @@ const OtpScreen: React.FC<Props> = ({ navigation, route }) => {
               <Text style={styles.resendText}>Didn't receive OTP? </Text>
               {timer > 0 ? (
                 <Text style={styles.timerText}>Resend in {timer}s</Text>
+              ) : cooldown > 0 ? (
+                <Text style={styles.cooldownText}>Wait {cooldown}s</Text>
               ) : (
                 <Button
-                  title="Resend OTP"
+                  title={resendLoading ? "Sending..." : "Resend OTP"}
                   onPress={handleResendOtp}
                   loading={resendLoading}
+                  disabled={!canResend}
                   variant="outline"
                   fullWidth={false}
                   style={styles.resendButton}
@@ -300,6 +302,11 @@ const styles = StyleSheet.create({
   timerText: {
     fontSize: theme.typography.body.fontSize,
     color: theme.colors.primary,
+    fontWeight: '600',
+  },
+  cooldownText: {
+    fontSize: theme.typography.body.fontSize,
+    color: theme.colors.error,
     fontWeight: '600',
   },
   resendButton: {
