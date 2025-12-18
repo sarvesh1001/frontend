@@ -74,7 +74,7 @@ const PhoneLoginScreen: React.FC<Props> = ({ navigation }) => {
   const [selectedCountry, setSelectedCountry] = useState<CountryCode>(countryCodes[0]);
   const [showCountryPicker, setShowCountryPicker] = useState(false);
 
-  // Load saved phone number and country code
+  // Load saved phone numbery and country code
   useEffect(() => {
     const loadSavedData = async () => {
       const savedPhone = await getItem('phone_number');
